@@ -1,14 +1,14 @@
 use axum::{
     async_trait,
-    extract::{Extension, FromRequest, RequestParts},
+    extract::{Extension, FromRequest, RequestParts, Path},
     http::StatusCode,
     routing::get,
-    Router,
+    Router, response::Redirect,
 };
 use sqlx::mysql::{MySqlPoolOptions, MySqlPool};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr};
 
 #[tokio::main]
 async fn main() {
@@ -33,9 +33,10 @@ async fn main() {
     // build our application with some routes
     let app = Router::new()
         .route(
-            "/",
-            get(slink_direct).post(using_connection_extractor),
+            "/:slink",
+            get(slink_redirect).post(using_connection_extractor),
         )
+        
         .layer(Extension(pool));
 
     // run it with hyper
@@ -58,13 +59,21 @@ async fn using_connection_extractor(
 }
 
 // we can extract the connection pool with `Extension`
-async fn slink_direct(
+async fn slink_redirect(
+    Path(slink): Path<String>,
     Extension(pool): Extension<MySqlPool>,
-) -> Result<String, (StatusCode, String)> {
+) -> Result<Redirect, (StatusCode, String)> {
     sqlx::query_scalar("SELECT dest FROM slinks where slink = ?")
-        .bind("IvShpROgPt")
+        .bind(slink)
         .fetch_one(&pool)
         .await
+        .and_then(
+            |dest: String| {
+                Ok(Redirect::to(dest.as_str()))
+                    
+            }
+        
+        )
         .map_err(internal_error)
 
     
