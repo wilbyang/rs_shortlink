@@ -1,14 +1,15 @@
 use axum::{
     async_trait,
-    extract::{Extension, FromRequest, RequestParts, Path},
+    extract::{Extension, FromRequest, Path, RequestParts},
     http::StatusCode,
-    routing::get,
-    Router, response::Redirect,
+    response::Redirect,
+    routing::{get, post},
+    Router, Json,
 };
-use sqlx::mysql::{MySqlPoolOptions, MySqlPool};
+use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use std::{net::SocketAddr};
+use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() {
@@ -25,18 +26,14 @@ async fn main() {
     // setup connection pool
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
-        
         .connect(&db_connection_str)
         .await
         .expect("can connect to database");
 
     // build our application with some routes
     let app = Router::new()
-        .route(
-            "/:slink",
-            get(slink_redirect).post(using_connection_extractor),
-        )
-        
+        .route("/s/:slink", get(serve_slink))
+        .route("/s", post(upsert_slink))
         .layer(Extension(pool));
 
     // run it with hyper
@@ -48,18 +45,23 @@ async fn main() {
         .unwrap();
 }
 
-async fn using_connection_extractor(
+async fn upsert_slink(
+    Json(slink): Json<SLink>,
     DatabaseConnection(conn): DatabaseConnection,
 ) -> Result<String, (StatusCode, String)> {
+
     let mut conn = conn;
-    sqlx::query_scalar("select 'hello world from pg'")
-        .fetch_one(&mut conn)
+    sqlx::query("INSERT INTO slinks (slink) VALUES (?)")
+        .bind(slink.slink)
+        .execute(&mut conn)
         .await
+        .and_then(|_| Ok("".to_string()))
         .map_err(internal_error)
+
 }
 
 // we can extract the connection pool with `Extension`
-async fn slink_redirect(
+async fn serve_slink(
     Path(slink): Path<String>,
     Extension(pool): Extension<MySqlPool>,
 ) -> Result<Redirect, (StatusCode, String)> {
@@ -67,20 +69,12 @@ async fn slink_redirect(
         .bind(slink)
         .fetch_one(&pool)
         .await
-        .and_then(
-            |dest: String| {
-                Ok(Redirect::to(dest.as_str()))
-                    
-            }
-        
-        )
+        .and_then(|dest: String| Ok(Redirect::to(dest.as_str())))
         .map_err(internal_error)
-
-    
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct SLink{
+struct SLink {
     slink: String,
     dest: String,
 }
@@ -106,8 +100,6 @@ where
         Ok(Self(conn))
     }
 }
-
-
 
 /// Utility function for mapping any error into a `500 Internal Server Error`
 /// response.
