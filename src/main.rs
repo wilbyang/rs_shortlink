@@ -2,13 +2,13 @@ use axum::{
     async_trait,
     extract::{Extension, FromRequest, Path, RequestParts},
     http::StatusCode,
-    response::Redirect,
+    response::{Redirect, IntoResponse},
     routing::{get, post},
     Router, Json,
 };
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -37,7 +37,7 @@ async fn main() {
         .layer(Extension(pool));
 
     // run it with hyper
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3002));
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
@@ -47,15 +47,16 @@ async fn main() {
 
 async fn upsert_slink(
     Json(slink): Json<SLink>,
-    DatabaseConnection(conn): DatabaseConnection,
-) -> Result<String, (StatusCode, String)> {
-
-    let mut conn = conn;
-    sqlx::query("INSERT INTO slinks (slink) VALUES (?)")
+    Extension(pool): Extension<MySqlPool>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let json = slink.clone();
+    
+    sqlx::query("INSERT INTO slinks (slink, dest) VALUES (?,?)")
         .bind(slink.slink)
-        .execute(&mut conn)
+        .bind(slink.dest)
+        .execute(&pool)
         .await
-        .and_then(|_| Ok("".to_string()))
+        .and_then(|_| Ok(Json(json)))
         .map_err(internal_error)
 
 }
@@ -64,7 +65,7 @@ async fn upsert_slink(
 async fn serve_slink(
     Path(slink): Path<String>,
     Extension(pool): Extension<MySqlPool>,
-) -> Result<Redirect, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     sqlx::query_scalar("SELECT dest FROM slinks where slink = ?")
         .bind(slink)
         .fetch_one(&pool)
@@ -73,7 +74,7 @@ async fn serve_slink(
         .map_err(internal_error)
 }
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug, Deserialize, Serialize, Clone, sqlx::FromRow)]
 struct SLink {
     slink: String,
     dest: String,
