@@ -10,7 +10,7 @@ pub enum LinkErrors {
     #[error("I/O error")]
     IoError(#[from] std::io::Error),
 
-    #[error("Toml error")]
+    #[error("Toml config load error")]
     TomlError(#[from] toml::de::Error),
     
     #[error("unknown data store error")]

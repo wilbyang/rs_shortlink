@@ -2,21 +2,19 @@ mod err;
 mod routes;
 mod repo;
 mod config;
+mod domain;
 
 use axum::{
     async_trait,
-    extract::{Extension, FromRequest, MatchedPath, Path, RequestParts},
-    http::{Request, StatusCode},
-    middleware::{self, Next},
+    extract::{Extension, FromRequest, Path, RequestParts},
+    http::{StatusCode},
     response::{IntoResponse, Redirect},
     routing::{get, post},
     Json, Router,
 };
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
-use routes::health_check;
 
-use serde::{Deserialize, Serialize};
 use std::{
     future::ready,
     net::SocketAddr,
@@ -26,10 +24,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::ServerConfig;
 use crate::routes::health_check::health_check;
 use anyhow::Result;
+use crate::domain::short_link::ShortLink;
+use repo::MysqlRepo;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "example_tokio_postgres=debug".into()),
@@ -52,7 +51,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/s/:slink", get(serve_slink))
-        .route("/s", post(upsert_slink))
+        .route("/s", post(save_link))
+
         .route("/fast", get(|| async {}))
         .route(
             "/slow",
@@ -85,52 +85,38 @@ fn setup_metrics_recorder() -> PrometheusHandle {
         .unwrap()
         .install_recorder()
         .unwrap()
-        
 }
 
-async fn upsert_slink(
-    Json(slink): Json<SLink>,
-    Extension(pool): Extension<MySqlPool>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let json = slink.clone();
-    
-    sqlx::query("INSERT INTO slinks (slink, dest) VALUES (?,?)")
-        .bind(slink.slink)
-        .bind(slink.dest)
-        .execute(&pool)
-        .await
-        .and_then(|_| Ok(Json(json)))
-        .map_err(internal_error)
-
-}
 
 // we can extract the connection pool with `Extension`
 async fn serve_slink(
     Path(slink): Path<String>,
-    Extension(pool): Extension<MySqlPool>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    sqlx::query_scalar("SELECT dest FROM slinks where slink = ?")
-        .bind(slink)
-        .fetch_one(&pool)
+    repo: MysqlRepo,
+) -> core::result::Result<impl IntoResponse, (StatusCode, String)> {
+    repo.serve_link(slink.as_str())
         .await
         .and_then(|dest: String| Ok(Redirect::to(dest.as_str())))
-        .map_err(internal_error)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
-
-#[derive(Debug, Deserialize, Serialize, Clone, sqlx::FromRow)]
-struct SLink {
-    slink: String,
-    dest: String,
+async fn save_link(
+    Json(slink): Json<ShortLink>,
+    repo: MysqlRepo,
+) -> core::result::Result<impl IntoResponse, (StatusCode, String)> {
+    let short_link = slink.clone();
+    repo.save_link(slink)
+        .await
+        .and_then(|_| Ok(Json(short_link)))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 // we can also write a custom extractor that grabs a connection from the pool
 // which setup is appropriate depends on your application
-struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::MySql>);
+//struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::MySql>);
 
 #[async_trait]
-impl<B> FromRequest<B> for DatabaseConnection
-where
-    B: Send,
+impl<B> FromRequest<B> for MysqlRepo
+    where
+        B: Send,
 {
     type Rejection = (StatusCode, String);
 
@@ -139,17 +125,17 @@ where
             .await
             .map_err(internal_error)?;
 
-        let conn = pool.acquire().await.map_err(internal_error)?;
 
-        Ok(Self(conn))
+        Ok(Self { pool })
     }
 }
+
 
 /// Utility function for mapping any error into a `500 Internal Server Error`
 /// response.
 fn internal_error<E>(err: E) -> (StatusCode, String)
-where
-    E: std::error::Error,
+    where
+        E: std::error::Error,
 {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
