@@ -1,6 +1,7 @@
 mod err;
 mod routes;
 mod repo;
+mod config;
 
 use axum::{
     async_trait,
@@ -22,10 +23,13 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use crate::config::ServerConfig;
 use crate::routes::health_check::health_check;
+use anyhow::Result;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
+
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "example_tokio_postgres=debug".into()),
@@ -33,13 +37,13 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let db_connection_str = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://root:123456@localhost:3308/mylinks".to_string());
+    let config: ServerConfig = toml::from_str(include_str!("../fixtures/server.conf"))?;
+
 
     // setup connection pool
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
-        .connect(&db_connection_str)
+        .connect(config.db.db_conn.as_ref())
         .await
         .expect("can connect to database");
 
@@ -64,8 +68,8 @@ async fn main() {
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
-        .await
-        .unwrap();
+        .await?;
+    Ok(())
 }
 
 fn setup_metrics_recorder() -> PrometheusHandle {
