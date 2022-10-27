@@ -15,4 +15,7 @@ tokio = {version="1", features=["full"]}
 tracing = "0.1.36"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = {version="1.0.130", features=["derive"]}
+dotenv = "0.15.0"
+metrics = "0.20"
+metrics-exporter-prometheus = "0.11"
 

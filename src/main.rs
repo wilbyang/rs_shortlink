@@ -1,15 +1,28 @@
+mod err;
+mod routes;
+mod repo;
+
 use axum::{
     async_trait,
-    extract::{Extension, FromRequest, Path, RequestParts},
-    http::StatusCode,
-    response::{Redirect, IntoResponse},
+    extract::{Extension, FromRequest, MatchedPath, Path, RequestParts},
+    http::{Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Redirect},
     routing::{get, post},
-    Router, Json,
+    Json, Router,
 };
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use routes::health_check;
+
 use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
+use std::{
+    future::ready,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use crate::routes::health_check::health_check;
 
 #[tokio::main]
 async fn main() {
@@ -30,10 +43,20 @@ async fn main() {
         .await
         .expect("can connect to database");
 
-    // build our application with some routes
+    let recorder_handle = setup_metrics_recorder();
+
     let app = Router::new()
+        .route("/health", get(health_check))
         .route("/s/:slink", get(serve_slink))
         .route("/s", post(upsert_slink))
+        .route("/fast", get(|| async {}))
+        .route(
+            "/slow",
+            get(|| async {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }),
+        )
+        .route("/metrics", get(move || ready(recorder_handle.render())))
         .layer(Extension(pool));
 
     // run it with hyper
@@ -43,6 +66,22 @@ async fn main() {
         .serve(app.into_make_service())
         .await
         .unwrap();
+}
+
+fn setup_metrics_recorder() -> PrometheusHandle {
+    const EXPONENTIAL_SECONDS: &[f64] = &[
+        0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+    ];
+
+    PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("http_requests_duration_seconds".to_string()),
+            EXPONENTIAL_SECONDS,
+        )
+        .unwrap()
+        .install_recorder()
+        .unwrap()
+        
 }
 
 async fn upsert_slink(
