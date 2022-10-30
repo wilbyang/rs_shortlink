@@ -4,14 +4,7 @@ mod repo;
 mod config;
 mod domain;
 
-use axum::{
-    async_trait,
-    extract::{Extension, FromRequest, Path, RequestParts},
-    http::{StatusCode},
-    response::{IntoResponse, Redirect},
-    routing::{get, post},
-    Json, Router,
-};
+use axum::{async_trait, extract::{Extension, FromRequest, Path, RequestParts}, http::{StatusCode}, response::{IntoResponse, Redirect}, routing::{get, post}, Json, Router, middleware};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
@@ -24,6 +17,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::ServerConfig;
 use crate::routes::health_check::health_check;
 use anyhow::Result;
+use axum::extract::MatchedPath;
+use axum::http::Request;
+use axum::middleware::Next;
 use crate::domain::short_link::ShortLink;
 use repo::MysqlRepo;
 
@@ -61,6 +57,7 @@ async fn main() -> Result<()> {
             }),
         )
         .route("/metrics", get(move || ready(recorder_handle.render())))
+        .route_layer(middleware::from_fn(track_metrics))
         .layer(Extension(pool));
 
     // run it with hyper
@@ -85,6 +82,32 @@ fn setup_metrics_recorder() -> PrometheusHandle {
         .unwrap()
         .install_recorder()
         .unwrap()
+}
+
+async fn track_metrics<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+    let start = Instant::now();
+    let path = if let Some(matched_path) = req.extensions().get::<MatchedPath>() {
+        matched_path.as_str().to_owned()
+    } else {
+        req.uri().path().to_owned()
+    };
+    let method = req.method().clone();
+
+    let response = next.run(req).await;
+
+    let latency = start.elapsed().as_secs_f64();
+    let status = response.status().as_u16().to_string();
+
+    let labels = [
+        ("method", method.to_string()),
+        ("path", path),
+        ("status", status),
+    ];
+
+    metrics::increment_counter!("http_requests_total", &labels);
+    metrics::histogram!("http_requests_duration_seconds", latency, &labels);
+
+    response
 }
 
 
