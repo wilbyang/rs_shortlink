@@ -20,6 +20,7 @@ use anyhow::Result;
 use axum::extract::MatchedPath;
 use axum::http::Request;
 use axum::middleware::Next;
+use tracing::info;
 use crate::domain::short_link::ShortLink;
 use repo::MysqlRepo;
 
@@ -62,7 +63,15 @@ async fn main() -> Result<()> {
 
     // run it with hyper
     let addr = SocketAddr::from(([127, 0, 0, 1], 3002));
-    tracing::debug!("listening on {}", addr);
+    info!("listening on {}", addr);
+    tokio::spawn(async {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            info!("tick");
+        }
+
+    });
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await?;
