@@ -4,6 +4,7 @@ mod repo;
 mod config;
 mod domain;
 
+
 use axum::{async_trait, extract::{Extension, FromRequest, Path, RequestParts}, http::{StatusCode}, response::{IntoResponse, Redirect}, routing::{get, post}, Json, Router, middleware};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
@@ -15,7 +16,7 @@ use std::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::ServerConfig;
-use crate::routes::health_check::health_check;
+use crate::routes::{health_check, serve_slink, save_link};
 use anyhow::Result;
 use axum::extract::MatchedPath;
 use axum::http::Request;
@@ -120,26 +121,8 @@ async fn track_metrics<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
 }
 
 
-// we can extract the connection pool with `Extension`
-async fn serve_slink(
-    Path(slink): Path<String>,
-    repo: MysqlRepo,
-) -> core::result::Result<impl IntoResponse, (StatusCode, String)> {
-    repo.serve_link(slink.as_str())
-        .await
-        .and_then(|dest: String| Ok(Redirect::to(dest.as_str())))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
-}
-async fn save_link(
-    Json(slink): Json<ShortLink>,
-    repo: MysqlRepo,
-) -> core::result::Result<impl IntoResponse, (StatusCode, String)> {
-    let short_link = slink.clone();
-    repo.save_link(slink)
-        .await
-        .and_then(|_| Ok(Json(short_link)))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
-}
+
+
 
 // we can also write a custom extractor that grabs a connection from the pool
 // which setup is appropriate depends on your application
