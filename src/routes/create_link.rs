@@ -1,13 +1,13 @@
 use axum::http::StatusCode;
 use axum::Json;
 use axum::response::IntoResponse;
-use crate::domain::short_link::ShortLink;
+use crate::domain::ShortLink;
 use crate::repo::MysqlRepo;
 
 pub async fn save_link(
-    Json(slink): Json<ShortLink>,
     repo: MysqlRepo,
-) -> core::result::Result<impl IntoResponse, (StatusCode, String)> {
+    Json(slink): Json<ShortLink>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let short_link = slink.clone();
     repo.save_link(slink)
         .await

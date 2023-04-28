@@ -5,9 +5,9 @@ use crate::repo::MysqlRepo;
 
 // we can extract the connection pool with `Extension`
 pub async fn serve_slink(
-    repo: MysqlRepo,
     Path(slink): Path<String>,
-) -> core::result::Result<impl IntoResponse, (StatusCode, String)> {
+    repo: MysqlRepo,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     repo.serve_link(slink.as_str())
         .await
         .and_then(|dest: String| Ok(Redirect::to(dest.as_str())))

@@ -4,8 +4,7 @@ mod repo;
 mod config;
 mod domain;
 
-
-use axum::{async_trait, extract::{Extension, FromRequest, Path, RequestParts}, http::{StatusCode}, response::{IntoResponse, Redirect}, routing::{get, post}, Json, Router, middleware};
+use axum::{async_trait, extract::{ FromRequest }, http::{StatusCode}, response::{IntoResponse}, routing::{post, get}, Router, middleware};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
@@ -18,11 +17,11 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::ServerConfig;
 use crate::routes::{health_check, serve_slink, save_link};
 use anyhow::Result;
-use axum::extract::MatchedPath;
+use axum::extract::{FromRef, FromRequestParts, MatchedPath};
 use axum::http::Request;
+use axum::http::request::Parts;
 use axum::middleware::Next;
 use tracing::info;
-use crate::domain::short_link::ShortLink;
 use repo::MysqlRepo;
 
 #[tokio::main]
@@ -60,7 +59,7 @@ async fn main() -> Result<()> {
         )
         .route("/metrics", get(move || ready(recorder_handle.render())))
         .route_layer(middleware::from_fn(track_metrics))
-        .layer(Extension(pool));
+        .with_state(pool);
 
     // run it with hyper
     let addr = SocketAddr::from(([127, 0, 0, 1], 3002));
@@ -129,17 +128,15 @@ async fn track_metrics<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
 //struct DatabaseConnection(sqlx::pool::PoolConnection<sqlx::MySql>);
 
 #[async_trait]
-impl<B> FromRequest<B> for MysqlRepo
+impl<S> FromRequestParts<S> for MysqlRepo
     where
-        B: Send,
+        MySqlPool: FromRef<S>,
+        S: Send + Sync,
 {
     type Rejection = (StatusCode, String);
 
-    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        let Extension(pool) = Extension::<MySqlPool>::from_request(req)
-            .await
-            .map_err(internal_error)?;
-
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> std::result::Result<Self, Self::Rejection> {
+        let pool = MySqlPool::from_ref(state);
 
         Ok(Self { pool })
     }
