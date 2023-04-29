@@ -4,7 +4,7 @@ mod repo;
 mod config;
 mod domain;
 
-use axum::{async_trait, extract::{ FromRequest }, http::{StatusCode}, response::{IntoResponse}, routing::{post, get}, Router, middleware};
+use axum::{async_trait, http::{StatusCode}, response::{IntoResponse}, routing::{post, get}, Router, middleware};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
